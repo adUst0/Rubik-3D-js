@@ -1,0 +1,449 @@
+﻿<html>
+	<head>
+		<style>
+			body { margin: 0; }
+			canvas { width: 100%; height: 100% }
+		</style>
+	</head>
+	<body>
+		<script src="libs/three.min.js"></script>
+		<script src="libs/OrbitControls.js"></script>
+		<script src="media/floor_base64.js"></script>
+		<script>
+
+			var camera, scene, renderer;
+			var mouse, raycaster, INTERSECTED;
+			var controls;
+
+			var step = 0, angle, isMoving = false;
+
+			// Don't rotate Rubik's rows on mouse hold
+			var isClicked = false;
+			var timeClicked;
+
+			// front, left, right, back
+			var cubeSide = 'front';
+
+			// up, left, right, down
+			var moveDirection = 'up';
+
+			var pivot = new THREE.Object3D();
+			var allCubes = [];
+			var	active = [];
+
+			init();
+			drawFrame();
+
+			// Convert radians to degrees
+			function radToDeg(rad) {
+				return 180 * rad / Math.PI;
+			}
+
+			function init() {
+				renderer = new THREE.WebGLRenderer({antialias:true});
+				renderer.setSize( window.innerWidth, window.innerHeight );
+				renderer.setClearColor( 0xcce0ff);
+				document.body.appendChild( renderer.domElement );
+
+				scene = new THREE.Scene();
+				scene.fog = new THREE.Fog( 0xcce0ff);
+				
+				camera = new THREE.PerspectiveCamera( 30, window.innerWidth/window.innerHeight, 0.1, 1000 );
+				camera.position.set(5,3,14);
+				camera.lookAt(new THREE.Vector3(0,0,0));
+
+				raycaster = new THREE.Raycaster();
+				mouse = new THREE.Vector2();
+
+				scene.add(pivot);
+
+				scene.add( new THREE.AmbientLight( 0xeef0ff ) );
+
+				addRubik();
+
+				// add OrbitControls
+				addControls();
+
+				addTerrain();
+
+				document.addEventListener( 'mouseup', onDocumentMouseUp, false );
+				document.addEventListener( 'mousedown', onDocumentMouseDown, false );
+				document.addEventListener( 'mousewheel', onDocumentMouseWheel, false );
+				document.addEventListener( 'DOMMouseScroll', onDocumentMouseWheel, false ); // Firefox
+				window.addEventListener( 'resize', onWindowResize, false );
+			}
+
+			function addRubik() {
+				var geometry = new THREE.BoxGeometry( 0.95, 0.95, 0.95);
+
+				geometry.faces[0].color.set('green');
+				geometry.faces[1].color.set('green');
+				geometry.faces[2].color.set('blue');
+				geometry.faces[3].color.set('blue');
+				geometry.faces[4].color.set('red');
+				geometry.faces[5].color.set('red');
+				geometry.faces[6].color.set('orange');
+				geometry.faces[7].color.set('orange');
+				geometry.faces[8].color.set('white');
+				geometry.faces[9].color.set('white');
+				geometry.faces[10].color.set('yellow');
+				geometry.faces[11].color.set('yellow');
+
+				var material = new THREE.MeshBasicMaterial({vertexColors: THREE.FaceColors});
+
+				for (var i = -1; i < 2; i++) {
+					for (var j = -1; j < 2; j++) {
+						for (var k = -1; k < 2; k++) {
+							var cube = new THREE.Mesh(geometry, material)
+							cube.position.set(i, j, k);
+							scene.add(cube);
+							allCubes.push(cube);
+						}
+					}
+				}
+			}
+
+			// add Orbit Controls
+			function addControls() {
+				controls = new THREE.OrbitControls(camera, renderer.domElement);
+				controls.enableDamping = true;	// momentum
+				controls.dampingFactor = 0.10;	// momentum factor
+				controls.rotateSpeed = 0.1; // скорост на въртене
+				controls.enableZoom = false;
+				controls.enablePan = false;
+			}
+
+			// Load the floor texture
+			function addTerrain() {
+				var textureLoader = new THREE.TextureLoader();
+				var maxAnisotropy = renderer.getMaxAnisotropy();
+				var texture = textureLoader.load( floorTexture );
+				var material = new THREE.MeshPhongMaterial( { color: 0xffffff, map: texture } );
+				texture.anisotropy = maxAnisotropy;
+				texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+				texture.repeat.set( 512, 512 );
+
+				var geometryy = new THREE.PlaneBufferGeometry( 100, 100 );
+				var floor = new THREE.Mesh( geometryy, material );
+				floor.rotation.x = - Math.PI / 2;
+				floor.position.y -= 5;
+				floor.scale.set( 30, 30, 30 );
+				scene.add( floor );
+			}
+
+			// Check if the mouse button is held
+			function onDocumentMouseDown() {
+				isClicked = true;
+				var d = new Date();
+				timeClicked = d.getTime();
+			}
+
+			function onDocumentMouseUp(event) {
+				// if the button wasn't clicked or was held, do nothing
+				var d = new Date();
+				if (!isClicked || d.getTime() - timeClicked > 500) {
+					return;
+				}
+				isClicked = false;
+
+				// Check if there is move that is not completed
+				if (isMoving || step > 0) return;
+
+				event.preventDefault();
+				mouse.set( ( event.clientX / window.innerWidth ) * 2 - 1, - ( event.clientY / window.innerHeight ) * 2 + 1 );
+				raycaster.setFromCamera( mouse, camera );
+
+				var intersects = raycaster.intersectObjects( scene.children );
+
+				if ( intersects.length > 0){
+					INTERSECTED = intersects[ 0 ].object;
+
+					if ( allCubes.indexOf(INTERSECTED) < 0 ) {
+						return;
+					}
+
+					calculateCubeSide();
+						
+					switch ( event.button ) {
+						case 0: // left click
+							moveDirection = 'left';
+							active = [];
+							step = 1;
+
+							angle = -Math.PI/2;
+
+							updateActiveCubes();
+
+							pivot.rotation.set( 0, 0, 0 );
+							pivot.updateMatrixWorld();
+
+							for (var i = 0; i < 9; i++) {
+								THREE.SceneUtils.attach( active[i], scene, pivot );
+							}
+						break;
+						case 1: // middle click
+							console.log(allCubes.indexOf(INTERSECTED));
+							console.log(INTERSECTED.position);
+							console.log(INTERSECTED.rotation);
+						break;
+						case 2: // right click
+							moveDirection = 'right';
+							active = [];
+							step = 1;
+
+							angle = Math.PI/2;
+
+							updateActiveCubes();
+
+							pivot.rotation.set( 0, 0, 0 );
+							pivot.updateMatrixWorld();
+
+							for (var i = 0; i < 9; i++) {
+								THREE.SceneUtils.attach( active[i], scene, pivot );
+							}
+						break;
+					}
+				}
+			}
+
+			function onDocumentMouseWheel( event ) {
+				event.preventDefault();
+				var delta = 0;
+
+				if ( event.wheelDelta !== undefined ) {
+
+					// WebKit / Opera / Explorer 9
+
+					delta = event.wheelDelta;
+
+				} else if ( event.detail !== undefined ) {
+
+					// Firefox
+
+					delta = - event.detail;
+
+				}
+
+				event.preventDefault();
+				mouse.set( ( event.clientX / window.innerWidth ) * 2 - 1, - ( event.clientY / window.innerHeight ) * 2 + 1 );
+				raycaster.setFromCamera( mouse, camera );
+
+				var intersects = raycaster.intersectObjects( scene.children );
+
+				// Check if there is move that is not completed
+				if (isMoving || step > 0) return;
+
+				if ( intersects.length > 0){
+					INTERSECTED = intersects[ 0 ].object;
+
+					if ( allCubes.indexOf(INTERSECTED) < 0 ) {
+						return;
+					}
+
+					calculateCubeSide();
+
+					// scroll up
+					if ( delta > 0 ) {
+
+						moveDirection = 'up';
+						active = [];
+						step = 1;
+
+						switch(cubeSide) {
+							case 'front': 
+								angle = -Math.PI/2;
+								updateActiveCubes()
+							break;
+							case 'back':
+								angle = Math.PI/2;
+								updateActiveCubes()
+							break;
+							case 'left': 
+								angle = -Math.PI/2;
+								updateActiveCubes()
+							break;
+							case 'right':
+								updateActiveCubes()
+								angle = Math.PI/2;
+							break;
+						}
+
+						pivot.rotation.set( 0, 0, 0 );
+						pivot.updateMatrixWorld();
+
+						for (var i = 0; i < 9; i++) {
+							THREE.SceneUtils.attach( active[i], scene, pivot );
+						}
+
+					// scroll down
+					} else if ( delta < 0 ) {
+
+						moveDirection = 'down';
+						active = [];
+						step = 1;
+
+						switch(cubeSide) {
+							case 'front': 
+								angle = Math.PI/2;
+								updateActiveCubes();
+							break;
+							case 'back':
+								angle = -Math.PI/2;
+								updateActiveCubes();
+							break;
+							case 'left': 
+								angle = Math.PI/2;
+								updateActiveCubes();
+							break;
+							case 'right':
+								angle = -Math.PI/2;
+								updateActiveCubes();
+							break;
+						}
+
+						pivot.rotation.set( 0, 0, 0 );
+						pivot.updateMatrixWorld();
+
+						for (var i = 0; i < 9; i++) {
+							THREE.SceneUtils.attach( active[i], scene, pivot );
+						}
+					}
+				}
+			}
+
+			// Cube side according to the position of the camera
+			function calculateCubeSide() {
+				var cameraAngle = controls.getAzimuthalAngle();
+
+				if 	( cameraAngle >= -Math.PI/4 && cameraAngle <= Math.PI/4 ) {
+					cubeSide = 'front';
+				}
+				else if ( (cameraAngle >= 3*Math.PI/4 && cameraAngle < Math.PI) || (cameraAngle >= -Math.PI && cameraAngle <= -3*Math.PI/4) ) {
+					cubeSide = 'back';
+				}
+				else if ( cameraAngle > Math.PI/4 && cameraAngle < 3*Math.PI/4 ) {
+					cubeSide = 'right';
+				}
+				else {
+					cubeSide = 'left';
+				}
+			}
+
+			// Fill up the 'active' array with cubes that have to be rotated
+			function updateActiveCubes() {
+				switch( moveDirection ) {
+					case 'left': case 'right':
+						for (var i = 0; i < 27; i++) {
+							if ( allCubes[i].position.y >= INTERSECTED.position.y - 0.2 && allCubes[i].position.y <= INTERSECTED.position.y + 0.2 ) {
+								active.push(allCubes[i]);
+							}
+						}
+					break;
+					case 'down': case 'up':
+						if (cubeSide == 'front' || cubeSide == 'back') {
+							for (var i = 0; i < 27; i++) {
+								if ( allCubes[i].position.x >= INTERSECTED.position.x - 0.2 && allCubes[i].position.x <= INTERSECTED.position.x + 0.2 ) {
+									active.push(allCubes[i]);
+								}
+							}
+						}
+						else if (cubeSide == 'left' || cubeSide == 'right') {
+							for (var i = 0; i < 27; i++) {
+								if ( allCubes[i].position.z >= INTERSECTED.position.z - 0.2 && allCubes[i].position.z <= INTERSECTED.position.z + 0.2 ) {
+									active.push(allCubes[i]);
+								}
+							}
+						}
+					break;
+				}
+			}
+
+			function onWindowResize() {
+				camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+				renderer.setSize( window.innerWidth, window.innerHeight );
+			}
+
+			function drawFrame() {
+				requestAnimationFrame( drawFrame );
+
+				if ( INTERSECTED ) {
+					doMove();
+				}
+
+				renderer.render( scene, camera );
+			}
+
+			function doMove() {
+				isMoving = true;
+				switch( moveDirection ) {
+					case 'down': case 'up':
+						switch( cubeSide ) {
+							case 'front': case 'back':
+								pivot.rotation.x = 0*step + angle*(1-step);
+							break;
+							case 'left': case 'right':
+								pivot.rotation.z = 0*step + angle*(1-step);
+							break;
+						}
+					break;
+					case 'left': case 'right':
+						pivot.rotation.y = 0*step + angle*(1-step);
+					break;
+				}
+
+				if (step > 0) {
+					step -= 0.05;
+				}
+				else {
+					clearPivot();
+					isMoving = false;
+				}
+			}
+
+			function clearPivot() {
+				if ( pivot.children.length <= 0 ) {
+					return;
+				}
+
+				pivot.updateMatrixWorld();
+				for (var i = 0; i < 9; i++) {
+					active[i].updateMatrixWorld();
+					THREE.SceneUtils.detach( active[ i ], pivot, scene );
+				}
+			}
+
+		</script>
+
+		<div style = "position: absolute; top: 0; margin: 0.4em; font-weight: bold; font-size: 1.3em; line-height: 0.2em">
+			<p>CONTROLS:
+				<button id='hideButton' onClick="hideInfoBox()">Hide</button>
+				<button id='displayButton' style="display: none" onClick="showInfoBox()">Show</button>
+			</p>
+			<span id='infoBox'>
+				<hr />
+				<p>Left click = Rotate left</p>
+				<p>Right click = Rotate right</p>
+				<p>Scroll up = Rotate up</p>
+				<p>Scroll down = Rotate down</p>
+				<hr />
+				<p>Left click(hold) = Orbit around the cube</p>
+				<hr />
+			<span>
+		</div>
+
+	<script>
+		function hideInfoBox() {
+			infoBox.style.display = 'none';
+			hideButton.style.display = 'none';
+			displayButton.style.display = "";
+		}
+
+		function showInfoBox() {
+			infoBox.style.display = "";
+			hideButton.style.display = "";
+			displayButton.style.display = 'none';
+		}
+	</script>
+	</body>
+</html>
